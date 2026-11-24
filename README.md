@@ -8,6 +8,7 @@ These are our own solutions, not official ones. Everything compiles against CUDA
 
 | Path | What it is |
 | --- | --- |
+| `STARTER.cu` | Universal starter for any task: everything that is the same in every solution, with `CHANGE` comments marking the task-specific lines. Compiles and runs as is |
 | `THEORY.md` | Theory from zero: host/device, thread hierarchy, grid-stride loops, memory, streams, timing, reduction, matrices, common bugs, API cheat sheet, checklist |
 | `midterms/2025-midterm-1-matmul/` | 2025 midterm 1: N×N integer matrix multiplication with streams |
 | `midterms/2026-midterm-1-vectors/` | 2026 midterm 1: add / subtract / multiply two arrays + reduction |
