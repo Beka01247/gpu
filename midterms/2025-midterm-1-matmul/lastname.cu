@@ -13,6 +13,24 @@
         }                                                                 \
     } while (0)
 
+// skipped where managed memory has only limited support (Windows, WSL)
+void prefetch(const void *ptr, size_t bytes, int location, cudaStream_t stream = 0)
+{
+    int device, concurrent;
+    CHECK(cudaGetDevice(&device));
+    CHECK(cudaDeviceGetAttribute(&concurrent, cudaDevAttrConcurrentManagedAccess, device));
+    if (!concurrent)
+        return;
+#if CUDART_VERSION >= 13000
+    cudaMemLocation loc;
+    loc.type = location == cudaCpuDeviceId ? cudaMemLocationTypeHost : cudaMemLocationTypeDevice;
+    loc.id = location == cudaCpuDeviceId ? 0 : location;
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, loc, 0, stream));
+#else
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, location, stream));
+#endif
+}
+
 // multiple of warp size, power of two
 const int THREADS = 256;
 
@@ -76,9 +94,9 @@ void run(int n, bool printMatrices, int device, int blocks, cudaStream_t sA, cud
     CHECK(cudaMallocManaged(&c, bytes));
     cHost = (int *)malloc(bytes);
 
-    CHECK(cudaMemPrefetchAsync(a, bytes, device, sA));
-    CHECK(cudaMemPrefetchAsync(b, bytes, device, sB));
-    CHECK(cudaMemPrefetchAsync(c, bytes, device));
+    prefetch(a, bytes, device, sA);
+    prefetch(b, bytes, device, sB);
+    prefetch(c, bytes, device);
 
     fillMatrix<<<blocks, THREADS, 0, sA>>>(a, n, 1);
     fillMatrix<<<blocks, THREADS, 0, sB>>>(b, n, 3);
@@ -96,9 +114,9 @@ void run(int n, bool printMatrices, int device, int blocks, cudaStream_t sA, cud
     float gpuMs = 0;
     CHECK(cudaEventElapsedTime(&gpuMs, start, stop));
 
-    CHECK(cudaMemPrefetchAsync(a, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(b, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(c, bytes, cudaCpuDeviceId));
+    prefetch(a, bytes, cudaCpuDeviceId);
+    prefetch(b, bytes, cudaCpuDeviceId);
+    prefetch(c, bytes, cudaCpuDeviceId);
     CHECK(cudaDeviceSynchronize());
 
     auto t0 = std::chrono::high_resolution_clock::now();

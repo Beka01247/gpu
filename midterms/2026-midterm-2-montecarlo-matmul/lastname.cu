@@ -15,6 +15,24 @@
         }                                                                 \
     } while (0)
 
+// skipped where managed memory has only limited support (Windows, WSL)
+void prefetch(const void *ptr, size_t bytes, int location, cudaStream_t stream = 0)
+{
+    int device, concurrent;
+    CHECK(cudaGetDevice(&device));
+    CHECK(cudaDeviceGetAttribute(&concurrent, cudaDevAttrConcurrentManagedAccess, device));
+    if (!concurrent)
+        return;
+#if CUDART_VERSION >= 13000
+    cudaMemLocation loc;
+    loc.type = location == cudaCpuDeviceId ? cudaMemLocationTypeHost : cudaMemLocationTypeDevice;
+    loc.id = location == cudaCpuDeviceId ? 0 : location;
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, loc, 0, stream));
+#else
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, location, stream));
+#endif
+}
+
 // multiple of warp size, power of two for the reduction
 const int THREADS = 256;
 
@@ -168,10 +186,10 @@ void runMatMul(int n, bool show, int device, int blocks, curandState *states)
     cHost = (int *)malloc(bytes);
     *gpuSum = 0;
 
-    CHECK(cudaMemPrefetchAsync(a, bytes, device));
-    CHECK(cudaMemPrefetchAsync(b, bytes, device));
-    CHECK(cudaMemPrefetchAsync(c, bytes, device));
-    CHECK(cudaMemPrefetchAsync(gpuSum, sizeof(long long), device));
+    prefetch(a, bytes, device);
+    prefetch(b, bytes, device);
+    prefetch(c, bytes, device);
+    prefetch(gpuSum, sizeof(long long), device);
 
     generateMatrices<<<blocks, THREADS>>>(states, a, b, c, n);
 
@@ -187,10 +205,10 @@ void runMatMul(int n, bool show, int device, int blocks, curandState *states)
     float gpuMs = 0;
     CHECK(cudaEventElapsedTime(&gpuMs, start, stop));
 
-    CHECK(cudaMemPrefetchAsync(a, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(b, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(c, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(gpuSum, sizeof(long long), cudaCpuDeviceId));
+    prefetch(a, bytes, cudaCpuDeviceId);
+    prefetch(b, bytes, cudaCpuDeviceId);
+    prefetch(c, bytes, cudaCpuDeviceId);
+    prefetch(gpuSum, sizeof(long long), cudaCpuDeviceId);
     CHECK(cudaDeviceSynchronize());
 
     auto t0 = std::chrono::high_resolution_clock::now();

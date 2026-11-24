@@ -13,6 +13,24 @@
         }                                                                 \
     } while (0)
 
+// skipped where managed memory has only limited support (Windows, WSL)
+void prefetch(const void *ptr, size_t bytes, int location, cudaStream_t stream = 0)
+{
+    int device, concurrent;
+    CHECK(cudaGetDevice(&device));
+    CHECK(cudaDeviceGetAttribute(&concurrent, cudaDevAttrConcurrentManagedAccess, device));
+    if (!concurrent)
+        return;
+#if CUDART_VERSION >= 13000
+    cudaMemLocation loc;
+    loc.type = location == cudaCpuDeviceId ? cudaMemLocationTypeHost : cudaMemLocationTypeDevice;
+    loc.id = location == cudaCpuDeviceId ? 0 : location;
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, loc, 0, stream));
+#else
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, location, stream));
+#endif
+}
+
 const int THREADS = 256;
 const int BINS = 11;
 
@@ -79,8 +97,8 @@ int main()
     cudaStream_t s1, s2;
     CHECK(cudaStreamCreate(&s1));
     CHECK(cudaStreamCreate(&s2));
-    CHECK(cudaMemPrefetchAsync(a, bytes, device, s1));
-    CHECK(cudaMemPrefetchAsync(hist, BINS * sizeof(int), device, s2));
+    prefetch(a, bytes, device, s1);
+    prefetch(hist, BINS * sizeof(int), device, s2);
 
     fillA<<<blocks, THREADS, 0, s1>>>(a, N);
     CHECK(cudaGetLastError());
@@ -98,8 +116,8 @@ int main()
     float gpuMs = 0;
     CHECK(cudaEventElapsedTime(&gpuMs, start, stop));
 
-    CHECK(cudaMemPrefetchAsync(a, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(hist, BINS * sizeof(int), cudaCpuDeviceId));
+    prefetch(a, bytes, cudaCpuDeviceId);
+    prefetch(hist, BINS * sizeof(int), cudaCpuDeviceId);
     CHECK(cudaDeviceSynchronize());
 
     auto t0 = std::chrono::high_resolution_clock::now();

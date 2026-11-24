@@ -15,6 +15,24 @@
 
 const int THREADS = 256;
 
+// skipped where managed memory has only limited support (Windows, WSL)
+void prefetch(const void *ptr, size_t bytes, int location, cudaStream_t stream = 0)
+{
+    int device, concurrent;
+    CHECK(cudaGetDevice(&device));
+    CHECK(cudaDeviceGetAttribute(&concurrent, cudaDevAttrConcurrentManagedAccess, device));
+    if (!concurrent)
+        return;
+#if CUDART_VERSION >= 13000
+    cudaMemLocation loc;
+    loc.type = location == cudaCpuDeviceId ? cudaMemLocationTypeHost : cudaMemLocationTypeDevice;
+    loc.id = location == cudaCpuDeviceId ? 0 : location;
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, loc, 0, stream));
+#else
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, location, stream));
+#endif
+}
+
 // ---------- device functions ----------
 __device__ int opDevice(int x, int y) { return x + y; }
 
@@ -123,10 +141,10 @@ int main()
     CHECK(cudaStreamCreate(&s2));
 
     // 4. async migration to GPU
-    CHECK(cudaMemPrefetchAsync(a, bytes, device, s1));
-    CHECK(cudaMemPrefetchAsync(b, bytes, device, s2));
-    CHECK(cudaMemPrefetchAsync(c, bytes, device));
-    CHECK(cudaMemPrefetchAsync(sum, sizeof(long long), device));
+    prefetch(a, bytes, device, s1);
+    prefetch(b, bytes, device, s2);
+    prefetch(c, bytes, device);
+    prefetch(sum, sizeof(long long), device);
 
     // 5. fill on independent streams
     fillA<<<blocks, THREADS, 0, s1>>>(a, N);
@@ -148,10 +166,10 @@ int main()
     CHECK(cudaEventElapsedTime(&gpuMs, start, stop));
 
     // 7. async migration back to CPU
-    CHECK(cudaMemPrefetchAsync(a, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(b, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(c, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(sum, sizeof(long long), cudaCpuDeviceId));
+    prefetch(a, bytes, cudaCpuDeviceId);
+    prefetch(b, bytes, cudaCpuDeviceId);
+    prefetch(c, bytes, cudaCpuDeviceId);
+    prefetch(sum, sizeof(long long), cudaCpuDeviceId);
     CHECK(cudaDeviceSynchronize());
 
     // 8. CPU version, timed with chrono

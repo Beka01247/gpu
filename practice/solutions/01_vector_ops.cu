@@ -15,6 +15,24 @@
 
 const int THREADS = 256;
 
+// skipped where managed memory has only limited support (Windows, WSL)
+void prefetch(const void *ptr, size_t bytes, int location, cudaStream_t stream = 0)
+{
+    int device, concurrent;
+    CHECK(cudaGetDevice(&device));
+    CHECK(cudaDeviceGetAttribute(&concurrent, cudaDevAttrConcurrentManagedAccess, device));
+    if (!concurrent)
+        return;
+#if CUDART_VERSION >= 13000
+    cudaMemLocation loc;
+    loc.type = location == cudaCpuDeviceId ? cudaMemLocationTypeHost : cudaMemLocationTypeDevice;
+    loc.id = location == cudaCpuDeviceId ? 0 : location;
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, loc, 0, stream));
+#else
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, location, stream));
+#endif
+}
+
 __device__ int addDevice(int x, int y) { return x + y; }
 __device__ int subDevice(int x, int y) { return x - y; }
 __device__ int mulDevice(int x, int y) { return x * y; }
@@ -124,11 +142,11 @@ int main()
     for (int k = 0; k < 3; k++)
         CHECK(cudaStreamCreate(&s[k]));
 
-    CHECK(cudaMemPrefetchAsync(a, bytes, device, s[0]));
-    CHECK(cudaMemPrefetchAsync(b, bytes, device, s[1]));
+    prefetch(a, bytes, device, s[0]);
+    prefetch(b, bytes, device, s[1]);
     for (int k = 0; k < 3; k++)
-        CHECK(cudaMemPrefetchAsync(c[k], bytes, device, s[k]));
-    CHECK(cudaMemPrefetchAsync(sums, 3 * sizeof(long long), device));
+        prefetch(c[k], bytes, device, s[k]);
+    prefetch(sums, 3 * sizeof(long long), device);
 
     fillA<<<blocks, THREADS, 0, s[0]>>>(a, N);
     fillB<<<blocks, THREADS, 0, s[1]>>>(b, N);
@@ -151,11 +169,11 @@ int main()
     float gpuMs = 0;
     CHECK(cudaEventElapsedTime(&gpuMs, start, stop));
 
-    CHECK(cudaMemPrefetchAsync(a, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(b, bytes, cudaCpuDeviceId));
+    prefetch(a, bytes, cudaCpuDeviceId);
+    prefetch(b, bytes, cudaCpuDeviceId);
     for (int k = 0; k < 3; k++)
-        CHECK(cudaMemPrefetchAsync(c[k], bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(sums, 3 * sizeof(long long), cudaCpuDeviceId));
+        prefetch(c[k], bytes, cudaCpuDeviceId);
+    prefetch(sums, 3 * sizeof(long long), cudaCpuDeviceId);
     CHECK(cudaDeviceSynchronize());
 
     addHost(a, b, cHost[0], N);

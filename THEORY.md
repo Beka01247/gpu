@@ -209,6 +209,36 @@ CHECK(cudaFree(a));
 - Запись с CPU до кернелов (например, `*sum = 0;`) делай **до** prefetch на GPU.
 - **CUDA 13:** у `cudaMemPrefetchAsync` другая сигнатура (вместо номера устройства передаётся `cudaMemLocation`, плюс flags). Версию покажет `nvcc --version`. Если там 13.x, используй обёртку `prefetch()` из `midterms/2026-midterm-1-vectors/lastname.cu` или вариант B.
 
+### На машинах в лабе 3.323 (WSL, CUDA 13) — читать обязательно
+
+Экзамен идёт в WSL (Ubuntu 26.04), и там у `cudaMemPrefetchAsync` две ловушки:
+
+1. **CUDA 13** поменяла её сигнатуру: вызов `cudaMemPrefetchAsync(a, bytes, device, stream)` там не компилируется. В примерах препода на GitHub (`week-3/part-2/08-prefetch`) уже новая форма с `cudaMemLocation`.
+2. **WSL** поддерживает managed-память ограниченно (`cudaDevAttrConcurrentManagedAccess` = 0). Там prefetch возвращает ошибку, и `CHECK` вокруг него завершит программу. Непроверенная ошибка тоже вредна: её потом вернёт `cudaGetLastError()` после кернела.
+3. Решение — одна функция, которая работает и на CUDA 12, и на 13, а там, где prefetch не поддерживается, просто его пропускает. Вставляй её сразу после `const int THREADS` и вызывай `prefetch(a, bytes, device, s1)` или `prefetch(a, bytes, cudaCpuDeviceId)`:
+
+```cpp
+// skipped where managed memory has only limited support (Windows, WSL)
+void prefetch(const void *ptr, size_t bytes, int location, cudaStream_t stream = 0)
+{
+    int device, concurrent;
+    CHECK(cudaGetDevice(&device));
+    CHECK(cudaDeviceGetAttribute(&concurrent, cudaDevAttrConcurrentManagedAccess, device));
+    if (!concurrent)
+        return;
+#if CUDART_VERSION >= 13000
+    cudaMemLocation loc;
+    loc.type = location == cudaCpuDeviceId ? cudaMemLocationTypeHost : cudaMemLocationTypeDevice;
+    loc.id = location == cudaCpuDeviceId ? 0 : location;
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, loc, 0, stream));
+#else
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, location, stream));
+#endif
+}
+```
+
+Если не хочешь зависеть от managed-памяти совсем, бери вариант B (`cudaMalloc` + `cudaMallocHost` + `cudaMemcpyAsync`): он работает везде, так устроен пример препода `08-overlap-xfer`. И всегда делай `cudaDeviceSynchronize()` перед тем, как CPU трогает managed-массив: на WSL обращение CPU к managed-памяти во время работы кернела роняет программу.
+
 ### Вариант B: явные копирования
 
 Отдельные буферы на CPU и на GPU. Для настоящей асинхронности буфер на CPU должен быть **pinned** (`cudaMallocHost`), иначе `cudaMemcpyAsync` работает как обычный `cudaMemcpy`.
@@ -583,6 +613,24 @@ matMul2D<<<blocks2, threads2>>>(A, B, C, n);
 
 const int THREADS = 256;
 
+// skipped where managed memory has only limited support (Windows, WSL)
+void prefetch(const void *ptr, size_t bytes, int location, cudaStream_t stream = 0)
+{
+    int device, concurrent;
+    CHECK(cudaGetDevice(&device));
+    CHECK(cudaDeviceGetAttribute(&concurrent, cudaDevAttrConcurrentManagedAccess, device));
+    if (!concurrent)
+        return;
+#if CUDART_VERSION >= 13000
+    cudaMemLocation loc;
+    loc.type = location == cudaCpuDeviceId ? cudaMemLocationTypeHost : cudaMemLocationTypeDevice;
+    loc.id = location == cudaCpuDeviceId ? 0 : location;
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, loc, 0, stream));
+#else
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, location, stream));
+#endif
+}
+
 // ---------- device functions ----------
 __device__ int opDevice(int x, int y) { return x + y; }
 
@@ -691,10 +739,10 @@ int main()
     CHECK(cudaStreamCreate(&s2));
 
     // 4. async migration to GPU
-    CHECK(cudaMemPrefetchAsync(a, bytes, device, s1));
-    CHECK(cudaMemPrefetchAsync(b, bytes, device, s2));
-    CHECK(cudaMemPrefetchAsync(c, bytes, device));
-    CHECK(cudaMemPrefetchAsync(sum, sizeof(long long), device));
+    prefetch(a, bytes, device, s1);
+    prefetch(b, bytes, device, s2);
+    prefetch(c, bytes, device);
+    prefetch(sum, sizeof(long long), device);
 
     // 5. fill on independent streams
     fillA<<<blocks, THREADS, 0, s1>>>(a, N);
@@ -716,10 +764,10 @@ int main()
     CHECK(cudaEventElapsedTime(&gpuMs, start, stop));
 
     // 7. async migration back to CPU
-    CHECK(cudaMemPrefetchAsync(a, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(b, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(c, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(sum, sizeof(long long), cudaCpuDeviceId));
+    prefetch(a, bytes, cudaCpuDeviceId);
+    prefetch(b, bytes, cudaCpuDeviceId);
+    prefetch(c, bytes, cudaCpuDeviceId);
+    prefetch(sum, sizeof(long long), cudaCpuDeviceId);
     CHECK(cudaDeviceSynchronize());
 
     // 8. CPU version, timed with chrono

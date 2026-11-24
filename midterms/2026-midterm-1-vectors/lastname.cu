@@ -103,16 +103,21 @@ void printArray(const char *label, const int *arr, int n)
     printf("\n");
 }
 
-// CUDA 13 changed the cudaMemPrefetchAsync signature
-void prefetch(const void *ptr, size_t bytes, int device, cudaStream_t s)
+// skipped where managed memory has only limited support (Windows, WSL)
+void prefetch(const void *ptr, size_t bytes, int location, cudaStream_t stream = 0)
 {
+    int device, concurrent;
+    CHECK(cudaGetDevice(&device));
+    CHECK(cudaDeviceGetAttribute(&concurrent, cudaDevAttrConcurrentManagedAccess, device));
+    if (!concurrent)
+        return;
 #if CUDART_VERSION >= 13000
     cudaMemLocation loc;
-    loc.type = (device == cudaCpuDeviceId) ? cudaMemLocationTypeHost : cudaMemLocationTypeDevice;
-    loc.id = (device == cudaCpuDeviceId) ? 0 : device;
-    CHECK(cudaMemPrefetchAsync(ptr, bytes, loc, 0, s));
+    loc.type = location == cudaCpuDeviceId ? cudaMemLocationTypeHost : cudaMemLocationTypeDevice;
+    loc.id = location == cudaCpuDeviceId ? 0 : location;
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, loc, 0, stream));
 #else
-    CHECK(cudaMemPrefetchAsync(ptr, bytes, device, s));
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, location, stream));
 #endif
 }
 

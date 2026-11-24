@@ -16,6 +16,24 @@
 
 const int THREADS = 256;
 
+// skipped where managed memory has only limited support (Windows, WSL)
+void prefetch(const void *ptr, size_t bytes, int location, cudaStream_t stream = 0)
+{
+    int device, concurrent;
+    CHECK(cudaGetDevice(&device));
+    CHECK(cudaDeviceGetAttribute(&concurrent, cudaDevAttrConcurrentManagedAccess, device));
+    if (!concurrent)
+        return;
+#if CUDART_VERSION >= 13000
+    cudaMemLocation loc;
+    loc.type = location == cudaCpuDeviceId ? cudaMemLocationTypeHost : cudaMemLocationTypeDevice;
+    loc.id = location == cudaCpuDeviceId ? 0 : location;
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, loc, 0, stream));
+#else
+    CHECK(cudaMemPrefetchAsync(ptr, bytes, location, stream));
+#endif
+}
+
 __device__ int mulDevice(int x, int y) { return x * y; }
 
 __global__ void fillA(int *a, int n)
@@ -117,9 +135,9 @@ int main()
     cudaStream_t sA, sB;
     CHECK(cudaStreamCreate(&sA));
     CHECK(cudaStreamCreate(&sB));
-    CHECK(cudaMemPrefetchAsync(a, bytes, device, sA));
-    CHECK(cudaMemPrefetchAsync(b, bytes, device, sB));
-    CHECK(cudaMemPrefetchAsync(p, bytes, device));
+    prefetch(a, bytes, device, sA);
+    prefetch(b, bytes, device, sB);
+    prefetch(p, bytes, device);
 
     fillA<<<blocks, THREADS, 0, sA>>>(a, N);
     fillB<<<blocks, THREADS, 0, sB>>>(b, N);
@@ -140,8 +158,8 @@ int main()
     float gpuMs = 0;
     CHECK(cudaEventElapsedTime(&gpuMs, start, stop));
 
-    CHECK(cudaMemPrefetchAsync(a, bytes, cudaCpuDeviceId));
-    CHECK(cudaMemPrefetchAsync(b, bytes, cudaCpuDeviceId));
+    prefetch(a, bytes, cudaCpuDeviceId);
+    prefetch(b, bytes, cudaCpuDeviceId);
     CHECK(cudaDeviceSynchronize());
 
     auto t0 = std::chrono::high_resolution_clock::now();

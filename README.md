@@ -2,7 +2,7 @@
 
 Solutions to past midterms, 10 practice midterms with solutions and an auto-grader, standalone code templates, and a theory guide (in Russian) for the Parallel Systems and GPU Programming course.
 
-These are our own solutions, not official ones. Everything compiles against CUDA 12 headers and was run end to end in a CPU emulation of CUDA (HIP-CPU), where every program prints `PASSED`. Run them on a real GPU before you rely on them.
+These are our own solutions, not official ones. Everything compiles against CUDA 12 headers (the CUDA 13 code path was checked against CUDA 13.5 headers) and was run end to end in a CPU emulation of CUDA (HIP-CPU), where every program prints `PASSED`, both with and without managed-memory prefetch support. Run them on a real GPU before you rely on them.
 
 ## Layout
 
@@ -28,7 +28,10 @@ compute-sanitizer ./prog      # out-of-bounds and race errors
 
 The 2026 midterm 2 solution uses cuRAND's device API, which is header-only: no extra link flags needed.
 
-CUDA 13 changed the signature of `cudaMemPrefetchAsync`. Check `nvcc --version`; on 13.x use the `prefetch()` wrapper from `midterms/2026-midterm-1-vectors/lastname.cu`.
+Every file that uses managed memory goes through a small `prefetch()` helper instead of calling `cudaMemPrefetchAsync` directly, for two reasons that matter in the exam lab (WSL, Ubuntu 26.04):
+
+- CUDA 13 changed the signature of `cudaMemPrefetchAsync` (it now takes a `cudaMemLocation`), so the old four-argument call does not compile there. The helper picks the right form with `CUDART_VERSION`.
+- WSL has only limited managed-memory support (`cudaDevAttrConcurrentManagedAccess` is 0), where `cudaMemPrefetchAsync` returns an error. The helper skips the prefetch in that case instead of aborting. Always synchronize before the CPU touches managed memory: on WSL, CPU access while a kernel is running crashes the program.
 
 ## Practice
 
