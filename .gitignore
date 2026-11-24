@@ -1,0 +1,4 @@
+.trainer_state.json
+*.o
+*.out
+prog

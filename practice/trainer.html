@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CUDA Midterm Trainer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+/* VOICE: a lab machine at night before an exam - focused, quiet, no decoration
+   IDEA: the DLI lab terminal itself: shell, vim, nvcc, a grader
+   PICTURE: the terminal window, large, at the top; task sheet beside it
+   COLOUR and TYPE: near-black ground, pale green ink, NVIDIA green accent; JetBrains Mono + Space Grotesk
+   LAYOUT: terminal 2/3, task panel 1/3; stacks under 900px */
+:root{color-scheme:dark;--bg:#0b0d09;--panel:#12150f;--line:#242a1d;--ink:#d9e4cc;--dim:#8a9879;--acc:#76b900;--bad:#ff6b5e;--warn:#e8c547;--mono:"JetBrains Mono",ui-monospace,Menlo,monospace}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Space Grotesk",system-ui,sans-serif;overflow-x:clip}
+header{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;padding:18px max(3vw,14px) 10px}
+h1{margin:0;font-size:clamp(22px,3vw,32px);line-height:1.05;font-weight:700}
+h1 b{color:var(--acc)}
+header p{margin:0;color:var(--dim);font-size:14px}
+main{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:14px;padding:0 max(3vw,14px) 18px;height:calc(100vh - 80px);min-height:520px}
+@media(max-width:900px){main{grid-template-columns:minmax(0,1fr);height:auto}#term{height:70vh}#side{max-height:none}}
+#term{position:relative;background:#050604;border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px -30px #76b90055}
+.bar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);font:13px var(--mono);color:var(--dim)}
+.bar i{width:11px;height:11px;border-radius:50%;background:#2c3324;display:inline-block}
+.bar span{margin-left:auto}
+#timer{color:var(--acc);font-weight:600}
+#timer.late{color:var(--bad)}
+#out{flex:1;overflow-y:auto;padding:12px 14px 4px;font:14px/1.5 var(--mono);white-space:pre-wrap;word-break:break-word}
+#out div{min-height:1.5em}
+.ok{color:var(--acc)}.err{color:var(--bad)}.warn{color:var(--warn)}.dim{color:var(--dim)}.cmd{color:#fff}
+#inrow{display:flex;gap:0;padding:4px 14px 12px;font:14px var(--mono)}
+#prompt{color:var(--acc);white-space:pre}
+#cmdline{flex:1;background:transparent;border:0;outline:0;color:#fff;font:16px var(--mono);padding:0;caret-color:var(--acc)}
+#side{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;overflow-y:auto;max-height:100%}
+#side h2{font-size:18px;margin:0 0 8px;line-height:1.2}
+#side h3{font-size:14px;margin:18px 0 6px;color:var(--dim);font-weight:500}
+#task{font:12.5px/1.5 var(--mono);white-space:pre-wrap;margin:0;color:var(--ink)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chips button{font:13px var(--mono);background:#1b2015;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:8px 10px;min-height:36px;cursor:pointer}
+.chips button:hover,.chips button:focus-visible{border-color:var(--acc);outline:0}
+#rub{list-style:none;padding:0;margin:0;font:13px/1.7 var(--mono)}
+#score{font:700 40px/1 "Space Grotesk";color:var(--acc);margin:4px 0}
+/* overlays */
+.ov{position:absolute;inset:0;background:#050604;display:none;flex-direction:column;z-index:20}
+.ov.on{display:flex}
+.ovbar{display:flex;gap:10px;align-items:center;padding:6px 12px;border-bottom:1px solid var(--line);font:13px var(--mono);color:var(--dim);flex-wrap:wrap}
+.ovbar button{font:13px var(--mono);background:#1b2015;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 10px;cursor:pointer}
+.ovbar b{color:var(--acc)}
+#edwrap{flex:1;position:relative}
+#edwrap .CodeMirror,#fallback{position:absolute;inset:0;height:100%}
+#fallback,#pastebox{width:100%;background:#050604;color:var(--ink);border:0;outline:0;font:14px/1.5 var(--mono);padding:10px;resize:none}
+#pastebox{flex:1}
+/* minimal CodeMirror 5 core + dialog css */
+.CodeMirror{font-family:var(--mono);font-size:14px;line-height:1.5;color:var(--ink);background:#050604;direction:ltr;position:relative;overflow:hidden}
+.CodeMirror-lines{padding:4px 0;cursor:text;min-height:1px}
+.CodeMirror pre.CodeMirror-line,.CodeMirror pre.CodeMirror-line-like{padding:0 6px;border-radius:0;border-width:0;background:transparent;font-family:inherit;font-size:inherit;margin:0;white-space:pre;word-wrap:normal;line-height:inherit;color:inherit;z-index:2;position:relative;overflow:visible}
+.CodeMirror-scroll{overflow:scroll!important;margin-bottom:-50px;margin-right:-50px;padding-bottom:50px;height:100%;outline:none;position:relative;z-index:0}
+.CodeMirror-sizer{position:relative;border-right:50px solid transparent}
+.CodeMirror-vscrollbar,.CodeMirror-hscrollbar,.CodeMirror-scrollbar-filler,.CodeMirror-gutter-filler{position:absolute;z-index:6;display:none;outline:none}
+.CodeMirror-vscrollbar{right:0;top:0;overflow-x:hidden;overflow-y:scroll}
+.CodeMirror-hscrollbar{bottom:0;left:0;overflow-y:hidden;overflow-x:scroll}
+.CodeMirror-gutters{position:absolute;left:0;top:0;min-height:100%;z-index:3;border-right:1px solid var(--line);background:#080a06;white-space:nowrap}
+.CodeMirror-gutter{white-space:normal;height:100%;display:inline-block;vertical-align:top;margin-bottom:-50px}
+.CodeMirror-gutter-wrapper{position:absolute;z-index:4;background:none!important;border:none!important}
+.CodeMirror-gutter-elt{position:absolute;cursor:default;z-index:4}
+.CodeMirror-linenumber{padding:0 6px 0 5px;min-width:20px;text-align:right;color:#4d5842;white-space:nowrap}
+.CodeMirror-scroll,.CodeMirror-sizer,.CodeMirror-gutter,.CodeMirror-gutters,.CodeMirror-linenumber{box-sizing:content-box}
+.CodeMirror-measure{position:absolute;width:100%;height:0;overflow:hidden;visibility:hidden}
+.CodeMirror-measure pre{position:static}
+.CodeMirror-code{outline:none}
+.CodeMirror-linebackground{position:absolute;inset:0;z-index:0}
+.CodeMirror-cursor{position:absolute;pointer-events:none;border-left:2px solid var(--acc);width:0}
+div.CodeMirror-cursors{visibility:hidden;position:relative;z-index:3}
+.CodeMirror-focused div.CodeMirror-cursors{visibility:visible}
+.cm-fat-cursor .CodeMirror-cursor{width:auto;border:0!important;background:#76b90099}
+.cm-fat-cursor div.CodeMirror-cursors{z-index:1}
+.CodeMirror-selected{background:#2a3320}.CodeMirror-focused .CodeMirror-selected{background:#36442a}
+.CodeMirror-matchingbracket{color:#fff!important;text-decoration:underline}
+.cm-tab{display:inline-block}
+.cm-keyword{color:#9fd356}.cm-type,.cm-variable-3{color:#7cc4b8}.cm-def{color:#fff}.cm-string{color:#e8c547}.cm-number{color:#f0a35e}.cm-comment{color:#5d6b50;font-style:italic}.cm-meta{color:#c792ea}.cm-operator{color:#b9c7aa}
+.CodeMirror-dialog{position:absolute;left:0;right:0;background:#12150f;z-index:15;padding:4px 10px;overflow:hidden;color:var(--ink);font-family:var(--mono)}
+.CodeMirror-dialog-top{border-bottom:1px solid var(--line);top:0}
+.CodeMirror-dialog-bottom{border-top:1px solid var(--line);bottom:0}
+.CodeMirror-dialog input{border:none;outline:none;background:transparent;width:20em;color:inherit;font-family:var(--mono);font-size:14px}
+@media(prefers-reduced-motion:no-preference){#term{transition:box-shadow .3s}#term:focus-within{box-shadow:0 20px 70px -25px #76b90088}}
+</style>
+</head>
+<body>
+<header>
+  <h1>CUDA midterm <b>trainer</b></h1>
+  <p>10 practice midterms · shell + vim · grader in the midterm's format · real compile &amp; run happen on the lab GPU</p>
+</header>
+<main>
+  <section id="term" aria-label="Terminal">
+    <div class="bar"><i></i><i></i><i></i>&nbsp;serikov@dli-gpu: ~/mid<span id="timer"></span></div>
+    <div id="out" role="log" aria-live="polite"></div>
+    <div id="inrow"><span id="prompt">serikov@dli-gpu:~/mid$ </span><input id="cmdline" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Command"></div>
+    <div class="ov" id="edov">
+      <div class="ovbar"><b id="edname"></b><span id="edmode">vim: i insert · Esc normal · :w save · :q quit · :wq both</span><button id="edsave">:w</button><button id="edquit">:q</button></div>
+      <div id="edwrap"></div>
+    </div>
+    <div class="ov" id="pov">
+      <div class="ovbar"><b>paste</b><span>Paste the output of ./prog from the lab GPU, then Save</span><button id="psave">Save to output.txt</button><button id="pcancel">Cancel</button></div>
+      <textarea id="pastebox" spellcheck="false" aria-label="Program output"></textarea>
+    </div>
+  </section>
+  <aside id="side">
+    <h2 id="tasktitle">No task open</h2>
+    <pre id="task">Type  list  to see the 10 midterms, then  show 1  or  exam .</pre>
+    <h3>Last check</h3>
+    <div id="score">–</div>
+    <ul id="rub"></ul>
+    <h3>Pick a task (click = show, Shift+click = exam with timer)</h3>
+    <div class="chips" id="taskchips"></div>
+    <h3>Quick commands</h3>
+    <div class="chips" id="chips"></div>
+    <h3>On the real lab terminal</h3>
+    <pre id="task2" style="font:12.5px/1.6 var(--mono);white-space:pre-wrap;margin:0">vim serikov.cu
+nvcc -O2 -o serikov serikov.cu
+./serikov
+compute-sanitizer ./serikov
+nvidia-smi</pre>
+  </aside>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/searchcursor.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/keymap/vim.min.js"></script>
+<script>
+{
+const COMMON = `
+COMMON REQUIREMENTS (graded like the real midterm):
+ - blocks = warp size * number of SMs (query at runtime); threads = 256
+ - grid-stride loop in every kernel
+ - input filled ON THE GPU by a kernel, arrays on independent streams
+ - async migration: cudaMallocManaged + cudaMemPrefetchAsync
+   (or cudaMalloc + cudaMemcpyAsync)
+ - every sum via a shared-memory reduction kernel
+ - __device__ function(s) for the per-element operation
+ - host version + host verify; print "Verify: PASSED" / "FAILED"
+ - print hardware name; time GPU (cudaEvent) and CPU (std::chrono)
+ - free all memory, destroy streams/events; one file lastname.cu
+ - long long for sums; checked lines look like "Label = value"
+   (if a label is printed twice, the LAST one is checked)`;
+
+const TASKS = [
+ {t:"Vector add / sub / mul + reduction (2026 midterm-1 format)", x:`N = 2 << 20. Two int arrays a, b.
+Fill:  a[i] = (i % 11) - 5
+       b[i] = ((i * 7 + 3) % 11) - 5
+Three separate __device__ functions (add, subtract, multiply),
+c = a op b element-wise for each. Sum every c with the reduction
+kernel. Host versions + verify. Time GPU vs CPU multiplication.
+Also print A, B and the three C arrays for N = 10.
+
+Checked output:
+  Sum (addition) = ...
+  Sum (subtraction) = ...
+  Sum (multiplication) = ...`, e:{"Sum (addition)":-6,"Sum (subtraction)":-12,"Sum (multiplication)":-4194310}, extra:[["3+ __device__ functions", s=>(s.match(/__device__/g)||[]).length>=3]]},
+ {t:"Matrix multiplication (2025 midterm-1 format)", x:`N = 1 << 8. N x N int matrices, row-major, flat i in [0, N*N).
+Fill:  A[i] = (i * 3) % 10 - 4
+       B[i] = (i * 5 + 1) % 10 - 5
+C = A x B, one thread per C element (grid-stride over N*N),
+__device__ function for row(A) . column(B). Sum all of C with the
+reduction kernel. Host matmul + verify, time both.
+Print A, B, C for N = 4 first. Bonus: largest N your GPU handles.
+
+Checked output:
+  Sum (C) = ...
+  C[0][0] = ...
+  C[N-1][N-1] = ...`, e:{"Sum (C)":-12582144,"C[0][0]":-504,"C[N-1][N-1]":126}, extra:[]},
+ {t:"Integer SAXPY in place", x:`N = 1 << 22, k = 3.
+Fill:  x[i] = (i % 13) - 6
+       y[i] = (i % 7) - 3
+y = k * x + y IN PLACE via __device__ saxpyOp. Sum y by reduction.
+Trap: host check needs the ORIGINAL y - copy it before the kernel.
+
+Checked output:
+  Sum (y) = ...
+  y[12345] = ...`, e:{"Sum (y)":-50,"y[12345]":7}, extra:[]},
+ {t:"Dot product + max/min reduction", x:`N = 1 << 21.
+Fill:  a[i] = (i * 13 % 17) - 8
+       b[i] = (i * 5 % 9) - 4
+p[i] = a[i] * b[i] (device function). Dot = sum of p (reduction).
+Max and Min of p with a max/min shared-memory reduction; combine
+blocks with atomicMax / atomicMin (or a second kernel pass).
+
+Checked output:
+  Dot = ...
+  Max (a*b) = ...
+  Min (a*b) = ...`, e:{"Dot":-32,"Max (a*b)":32,"Min (a*b)":-32}, extra:[["max/min reduction", s=>/atomicMax|atomicMin|\bmax\s*\(|\bmin\s*\(/.test(s)]]},
+ {t:"C = A + B transposed, sum and trace", x:`N = 1024. N x N int matrices, row-major.
+Fill:  A[r][c] = (r * 3 + c) % 10 - 5
+       B[r][c] = (r + c * 2) % 9 - 4
+C[r][c] = A[r][c] + B[c][r]  (grid-stride over N*N, r = i / N, c = i % N)
+Sum all of C by reduction. Trace (C) = sum of the diagonal.
+
+Checked output:
+  Sum (C) = ...
+  Trace (C) = ...`, e:{"Sum (C)":-524292,"Trace (C)":-2053}, extra:[]},
+ {t:"Polynomial + counting with atomics", x:`N = 1 << 20.
+Fill:  x[i] = (i % 21) - 10
+y[i] = 2x^3 - 3x^2 + x - 7 via __device__ int poly(int x).
+Sum (y) by reduction. Count of y > 0 with atomicAdd.
+
+Checked output:
+  Sum (y) = ...
+  Count (y > 0) = ...`, e:{"Sum (y)":-122689036,"Count (y > 0)":399456}, extra:[["atomicAdd for counting", s=>s.includes("atomicAdd")]]},
+ {t:"Histogram with shared-memory privatization", x:`N = 1 << 22.
+Fill:  a[i] = ((i * 31 + 7) % 11) - 5     (values -5..5, 11 bins)
+Each block builds its histogram in __shared__ (atomicAdd on shared),
+then adds it to the global one (atomicAdd on global).
+Sum of a by reduction. Verify bins on the host.
+
+Checked output (one line per bin):
+  Bin -5 = ...   ...   Bin 5 = ...
+  Sum = ...`, e:{"Bin -5":381300,"Bin -4":381301,"Bin -3":381300,"Bin -2":381301,"Bin -1":381300,"Bin 0":381301,"Bin 1":381300,"Bin 2":381301,"Bin 3":381300,"Bin 4":381300,"Bin 5":381300,"Sum":-4}, extra:[["atomicAdd", s=>s.includes("atomicAdd")]]},
+ {t:"Sum / Min / Max of pseudo-random data", x:`N = 1 << 22. Use unsigned arithmetic exactly like this:
+  unsigned int h = ((unsigned int)i * 1103515245u + 12345u) >> 8;
+  a[i] = (int)(h % 1001) - 500;
+Sum, Min, Max on the GPU with shared-memory reductions
+(one kernel doing all three, or three kernels).
+
+Checked output:
+  Sum = ...
+  Min = ...
+  Max = ...`, e:{"Sum":-30759,"Min":-500,"Max":500}, extra:[]},
+ {t:"1D stencil", x:`N = 1 << 21.
+Fill:  a[i] = (i % 9) - 4
+c[i] = a[i-1] + 2 * a[i] + a[i+1]; out-of-range neighbours are 0.
+__device__ function for the stencil. Sum c by reduction.
+Bonus: tile + halo in __shared__ memory.
+
+Checked output:
+  Sum (c) = ...
+  c[0] = ...
+  c[N-1] = ...
+  c[1000] = ...`, e:{"Sum (c)":-15,"c[0]":-11,"c[N-1]":8,"c[1000]":-12}, extra:[]},
+ {t:"Matrix-vector multiplication", x:`N = 2048. A is N x N row-major, x has N elements.
+Fill:  A[r][c] = (r * 7 + c * 3) % 11 - 5   (A and x on different streams)
+       x[c] = (c % 5) - 2
+y = A * x, one thread per row (grid-stride over rows), dot product in a
+__device__ function. Sum (y) by reduction, Max (y) by max reduction.
+
+Checked output:
+  Sum (y) = ...
+  Max (y) = ...
+  y[7] = ...`, e:{"Sum (y)":9,"Max (y)":14,"y[7]":11}, extra:[]},
+];
+
+const $ = id => document.getElementById(id);
+const out = $("out"), cmdline = $("cmdline");
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem("cudatr_"+k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem("cudatr_"+k, JSON.stringify(v)); }catch(e){} }
+};
+let fs = store.get("fs", {});
+let best = store.get("best", {});
+let exam = store.get("exam", null);
+
+const hist = []; let hi = 0;
+
+function print(text, cls){
+  const d = document.createElement("div");
+  d.textContent = text;
+  if (cls) d.className = cls;
+  out.appendChild(d);
+  out.scrollTop = out.scrollHeight;
+}
+const saveFs = () => store.set("fs", fs);
+
+function showTask(n){
+  const T = TASKS[n-1];
+  $("tasktitle").textContent = `Task ${String(n).padStart(2,"0")} · ${T.t}`;
+  $("task").textContent = T.x + "\n" + COMMON;
+}
+
+function strip(src){ return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, ""); }
+
+function rubric(src){
+  const s = strip(src);
+  const nMalloc = (s.match(/\bcudaMalloc(Managed|Host)?\s*\(/g)||[]).length;
+  const nFree = (s.match(/\bcudaFree(Host)?\s*\(/g)||[]).length;
+  const streams = s.includes("cudaStreamCreate");
+  return [
+    ["grid-stride loop", 1, /blockDim\.x\s*\*\s*gridDim\.x|gridDim\.x\s*\*\s*blockDim\.x/.test(s)],
+    ["blocks = warp size * SMs", 1, /MultiProcessorCount|multiProcessorCount/.test(s) && /warpSize|WarpSize|\b32\b/.test(s)],
+    ["streams (create + launch on stream)", 1, streams && /<<<[^<>;]*,[^<>;]*,[^<>;]*,[^<>;]*>>>/.test(s)],
+    ["async data migration", 1, /cudaMemPrefetchAsync|cudaMemcpyAsync/.test(s)],
+    ["clear memory", 1, nMalloc > 0 && nFree >= nMalloc && (!streams || s.includes("cudaStreamDestroy"))],
+    ["__device__ function", 1, /__device__\s+(?!__)[\w:<>]+\s+\w+\s*\(/.test(s)],
+    ["timing: cudaEvent + chrono", 1, s.includes("cudaEventElapsedTime") && /chrono|clock\s*\(/.test(s)],
+    ["shared-memory reduction", 3, s.includes("__shared__") && s.includes("__syncthreads") && />>=\s*1|\/=\s*2|\/\s*2/.test(s)],
+  ];
+}
+
+function precheck(src){
+  const s = strip(src).replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])'/g, '""');
+  const issues = [];
+  const pairs = {"(":")","[":"]","{":"}"}; const st = [];
+  const lines = s.split("\n");
+  lines.forEach((ln, li) => { for (const ch of ln){
+    if (pairs[ch]) st.push([ch, li+1]);
+    else if (")]}".includes(ch)){ const top = st.pop(); if (!top || pairs[top[0]] !== ch) issues.push(`line ${li+1}: unexpected '${ch}'`); }
+  }});
+  st.forEach(([ch, l]) => issues.push(`line ${l}: '${ch}' is never closed`));
+  if (!/\bint\s+main\s*\(/.test(s)) issues.push("no int main()");
+  if (!/#include/.test(s)) issues.push("no #include");
+  if (!/__global__/.test(s)) issues.push("no __global__ kernel");
+  if (!/<<<[\s\S]*?>>>/.test(s)) issues.push("no kernel launch <<< >>>");
+  if (/__global__\s+(?!void)\w+/.test(s)) issues.push("__global__ functions must return void");
+  if (!/cudaDeviceSynchronize|cudaStreamSynchronize|cudaEventSynchronize/.test(s)) issues.push("warning: no synchronize before reading GPU results on the host");
+  return issues.slice(0, 12);
+}
+
+function parseVal(text, label){
+  const esc = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp("^\\s*" + esc + "\\s*[=:]\\s*(-?\\d+)", "gm");
+  let m, last = null; while ((m = re.exec(text))) last = parseInt(m[1], 10);
+  return last;
+}
+
+function check(n, file, outFile){
+  const T = TASKS[n-1];
+  if (!T) return print(`check: no task ${n} (1..10)`, "err");
+  if (!fs[file]) return print(`check: ${file}: No such file`, "err");
+  showTask(n);
+  print(`=== Checking task ${n}: ${T.t} ===`, "ok");
+  if (!file.endsWith(".cu")) print("WARNING: submission must be a .cu file (-5% on the real exam)", "warn");
+  let score = 0; const rows = [];
+  const output = fs[outFile || "output.txt"];
+  let corr = 0;
+  if (!output){
+    print("No program output yet → correctness not graded.", "warn");
+    print("Run ./serikov on the lab GPU, then type  paste  and paste its output here.", "dim");
+  } else {
+    let ok = 0; const keys = Object.keys(T.e);
+    keys.forEach(k => {
+      const got = parseVal(output, k), good = got === T.e[k];
+      ok += good;
+      print(`  ${good ? "OK " : "BAD"} ${k} = ${got === null ? "(missing)" : got}${good ? "" : "   expected " + T.e[k]}`, good ? "ok" : "err");
+    });
+    const passed = /PASSED/.test(output) && !/FAILED/.test(output);
+    print(`  ${passed ? "OK " : "BAD"} Verify line says PASSED`, passed ? "ok" : "err");
+    let frac = ok / keys.length; if (!passed) frac *= 0.8;
+    corr = Math.round(frac * 100) / 10;
+  }
+  score += corr;
+  rows.push([`correctness ${corr}/10`, output ? corr >= 10 : false]);
+  print(`  correctness: ${corr}/10`);
+  print("Rubric:");
+  const src = fs[file];
+  rubric(src).forEach(([name, pts, ok]) => {
+    if (ok) score += pts;
+    rows.push([`${name} (${pts}%)`, ok]);
+    print(`  [${ok ? "x" : " "}] ${name} (${pts}%)`, ok ? "ok" : "err");
+  });
+  T.extra.forEach(([name, fn]) => {
+    const ok = fn(strip(src)); if (!ok) score -= 1;
+    rows.push([`task: ${name}`, ok]);
+    print(`  [${ok ? "x" : " "}] task-specific: ${name}${ok ? "" : "  (-1)"}`, ok ? "ok" : "err");
+  });
+  score = Math.max(0, Math.round(score * 10) / 10);
+  print(`SCORE: ${score}/20${output ? "" : "  (max 10 without pasted output)"}`, "cmd");
+  if (exam && exam.task === n){
+    const mins = (Date.now() - exam.start) / 60000;
+    print(`Exam time: ${mins.toFixed(0)} min${mins > 90 ? ` → ${(mins - 90).toFixed(0)} min LATE` : " (in time)"}`, mins > 90 ? "err" : "ok");
+  }
+  if (output){ best[n] = Math.max(best[n] || 0, score); store.set("best", best); }
+  $("score").textContent = `${score}/20`;
+  $("rub").innerHTML = "";
+  rows.forEach(([txt, ok]) => { const li = document.createElement("li"); li.textContent = `${ok ? "✓" : "✗"} ${txt}`; li.className = ok ? "ok" : "err"; $("rub").appendChild(li); });
+}
+
+/* ---------- editor ---------- */
+let cm = null, edFile = null;
+const hasCM = typeof window.CodeMirror !== "undefined";
+function openEditor(name){
+  edFile = name;
+  if (!(name in fs)) fs[name] = "";
+  $("edname").textContent = name + (fs[name] ? "" : " [New]");
+  $("edov").classList.add("on");
+  if (hasCM){
+    if (!cm){
+      cm = CodeMirror($("edwrap"), { mode: "text/x-c++src", keyMap: "vim", lineNumbers: true, indentUnit: 4, matchBrackets: true, showCursorWhenSelecting: true });
+      CodeMirror.commands.save = () => { saveEditor(); };
+      const V = CodeMirror.Vim;
+      V.defineEx("quit", "q", () => closeEditor());
+      V.defineEx("wq", "wq", () => { saveEditor(); closeEditor(); });
+      V.defineEx("xit", "x", () => { saveEditor(); closeEditor(); });
+      CodeMirror.on(cm, "vim-mode-change", e => { $("edmode").textContent = "-- " + e.mode.toUpperCase() + " --   :w save · :q quit · :wq both"; });
+    }
+    cm.setValue(fs[name]); cm.clearHistory();
+    setTimeout(() => { cm.refresh(); cm.focus(); }, 20);
+  } else {
+    let ta = $("fallback");
+    if (!ta){ ta = document.createElement("textarea"); ta.id = "fallback"; ta.spellcheck = false; $("edwrap").appendChild(ta); }
+    $("edmode").textContent = "vim keys unavailable (CDN blocked) · plain editor";
+    ta.value = fs[name]; ta.focus();
+  }
+}
+function saveEditor(){
+  fs[edFile] = hasCM ? cm.getValue() : $("fallback").value; saveFs();
+  $("edname").textContent = `"${edFile}" ${fs[edFile].split("\n").length}L written`;
+}
+function closeEditor(){ $("edov").classList.remove("on"); cmdline.focus(); }
+$("edsave").onclick = saveEditor;
+$("edquit").onclick = closeEditor;
+
+/* ---------- paste ---------- */
+$("psave").onclick = () => { fs["output.txt"] = $("pastebox").value; saveFs(); $("pov").classList.remove("on"); print(`output.txt saved (${fs["output.txt"].split("\n").length} lines). Now: check <task> serikov.cu`, "ok"); cmdline.focus(); };
+$("pcancel").onclick = () => { $("pov").classList.remove("on"); cmdline.focus(); };
+
+/* ---------- shell ---------- */
+const HELP = `Commands:
+  list                      the 10 midterms + your best scores
+  show N                    open task N in the side panel
+  exam                      random task + 90-minute timer
+  exam N  /  exam stop      start task N with timer / stop the timer
+  vim FILE.cu               edit (real vim keys: i, Esc, :w, :q, :wq, dd, u, /)
+  nvcc -o NAME FILE.cu      pre-check syntax (browser can't compile CUDA)
+  ./NAME                    explains how to run on the lab GPU
+  paste                     paste ./prog output from the lab → output.txt
+  check N FILE.cu           grade like the midterm (/20)
+  ls · cat F · rm F · clear · history · cheat`;
+const CHEAT = `vim:  i insert · Esc normal · :w · :q · :wq · :q! · u undo · Ctrl-r redo
+      dd delete line · yy copy line · p paste · o new line below
+      /text search · n next · :42 go to line · gg=G re-indent · :set paste
+lab:  nvcc -O2 -o serikov serikov.cu && ./serikov
+      compute-sanitizer ./serikov     (out-of-bounds / race errors)
+      nvidia-smi                      (which GPU, memory)`;
+
+const bins_ = {};
+function run(line){
+  print(`serikov@dli-gpu:~/mid$ ${line}`, "cmd");
+  const a = line.trim().split(/\s+/).filter(Boolean);
+  if (!a.length) return;
+  const c = a[0];
+  if (c === "help") return print(HELP);
+  if (c === "cheat") return print(CHEAT);
+  if (c === "clear"){ out.innerHTML = ""; return; }
+  if (c === "history") return hist.forEach((h, i) => print(`${String(i+1).padStart(4)}  ${h}`));
+  if (c === "list") return TASKS.forEach((T, i) => print(`${String(i+1).padStart(3)}. ${T.t.padEnd(58)} ${best[i+1] != null ? "best " + best[i+1] + "/20" : "not tried"}`, best[i+1] >= 18 ? "ok" : ""));
+  if (c === "show"){ const n = +a[1]; if (!TASKS[n-1]) return print("usage: show N   (1..10)", "err"); showTask(n); return print(`Task ${n} opened in the side panel → vim serikov.cu`, "ok"); }
+  if (c === "exam" && a[1] === "stop"){ exam = null; store.set("exam", null); $("timer").textContent = ""; return print("Exam stopped. Your files are kept.", "ok"); }
+  if (c === "exam"){
+    const pool = TASKS.map((_, i) => i+1).filter(n => (best[n] || 0) < 18);
+    const n = +a[1] || (pool.length ? pool[Math.floor(Math.random() * pool.length)] : 1 + Math.floor(Math.random() * 10));
+    exam = { task: n, start: Date.now() }; store.set("exam", exam);
+    showTask(n); return print(`>>> Exam started: task ${n}, 90 minutes. Good luck.`, "ok");
+  }
+  if (c === "ls"){ const f = Object.keys(fs).concat(Object.keys(bins_)); return print(f.length ? f.join("  ") : "(empty)"); }
+  if (c === "cat"){ if (!fs[a[1]]) return print(`cat: ${a[1] || ""}: No such file`, "err"); return fs[a[1]].split("\n").forEach(l => print(l)); }
+  if (c === "rm"){ if (!fs[a[1]]) return print(`rm: ${a[1] || ""}: No such file`, "err"); delete fs[a[1]]; saveFs(); return; }
+  if (c === "vim" || c === "vi" || c === "nano"){ if (!a[1]) return print("usage: vim FILE.cu", "err"); return openEditor(a[1]); }
+  if (c === "paste"){ $("pastebox").value = ""; $("pov").classList.add("on"); return $("pastebox").focus(); }
+  if (c === "nvcc"){
+    const src = a.find(x => /\.(cu|cpp)$/.test(x)); const oi = a.indexOf("-o");
+    if (!src) return print("nvcc fatal: No input files specified", "err");
+    if (!fs[src]) return print(`nvcc fatal: Could not open input file '${src}'`, "err");
+    const issues = precheck(fs[src]);
+    const hard = issues.filter(i => !i.startsWith("warning"));
+    issues.forEach(i => print(`${src}: ${i}`, i.startsWith("warning") ? "warn" : "err"));
+    if (hard.length) return print("pre-check failed (on the lab, nvcc would likely fail too: -10%)", "err");
+    const name = oi > 0 ? a[oi + 1] : "a.out"; bins_[name] = src;
+    return print(`pre-check OK → ${name}. (Not a real compiler: run the same command on the lab GPU.)`, "ok");
+  }
+  if (c.startsWith("./")){
+    const name = c.slice(2);
+    if (!bins_[name]) return print(`bash: ${c}: No such file or directory (run nvcc first)`, "err");
+    print("No GPU in the browser. On the lab terminal:", "warn");
+    print(`  nvcc -O2 -o ${name} ${bins_[name]} && ./${name}`, "dim");
+    return print("Then come back, type  paste  and paste the output.", "dim");
+  }
+  if (c === "check"){ const n = +a[1]; if (!n || !a[2]) return print("usage: check N FILE.cu", "err"); return check(n, a[2], a[3]); }
+  print(`bash: ${c}: command not found (type help)`, "err");
+}
+
+cmdline.addEventListener("keydown", e => {
+  if (e.key === "Enter"){ const v = cmdline.value; if (v.trim()){ hist.push(v); } hi = hist.length; cmdline.value = ""; run(v); }
+  else if (e.key === "ArrowUp"){ if (hi > 0){ hi--; cmdline.value = hist[hi]; } e.preventDefault(); }
+  else if (e.key === "ArrowDown"){ if (hi < hist.length - 1){ hi++; cmdline.value = hist[hi]; } else { hi = hist.length; cmdline.value = ""; } e.preventDefault(); }
+  else if (e.key === "Tab"){
+    e.preventDefault();
+    const parts = cmdline.value.split(" "); const last = parts.pop();
+    const pool = parts.length ? Object.keys(fs).concat(Object.keys(bins_).map(b => "./" + b)) : ["list","show","exam","vim","nvcc","paste","check","ls","cat","rm","clear","help","cheat","history"];
+    const m = pool.filter(x => x.startsWith(last));
+    if (m.length === 1){ parts.push(m[0]); cmdline.value = parts.join(" ") + " "; }
+    else if (m.length > 1) print(m.join("  "), "dim");
+  } else if (e.key === "l" && e.ctrlKey){ e.preventDefault(); out.innerHTML = ""; }
+});
+$("term").addEventListener("click", e => { if (!$("edov").classList.contains("on") && !$("pov").classList.contains("on") && !getSelection().toString()) cmdline.focus(); });
+
+const CHIPS = ["help","list","exam","show 1","vim serikov.cu","nvcc -O2 -o serikov serikov.cu","./serikov","paste","check 1 serikov.cu","cheat"];
+CHIPS.forEach(t => { const b = document.createElement("button"); b.textContent = t; b.onclick = () => { cmdline.value = t; cmdline.focus(); }; $("chips").appendChild(b); });
+TASKS.forEach((T, i) => { const b = document.createElement("button"); b.textContent = String(i + 1); b.title = T.t; b.onclick = e => { run((e.shiftKey ? "exam " : "show ") + (i + 1)); cmdline.focus(); }; $("taskchips").appendChild(b); });
+
+setInterval(() => {
+  if (!exam) return;
+  const left = 90 * 60000 - (Date.now() - exam.start);
+  const m = Math.floor(Math.abs(left) / 60000), s = Math.floor(Math.abs(left) % 60000 / 1000);
+  $("timer").textContent = `task ${exam.task} · ${left < 0 ? "+" : ""}${m}:${String(s).padStart(2,"0")}${left < 0 ? " late" : " left"}`;
+  $("timer").classList.toggle("late", left < 0);
+}, 1000);
+
+print("CUDA midterm trainer. Same workflow as the lab terminal:", "ok");
+print("  show 1 → vim serikov.cu → nvcc -o serikov serikov.cu → (lab) ./serikov → paste → check 1 serikov.cu", "dim");
+print("Type help for all commands. Files are kept in this browser.", "dim");
+if (exam) showTask(exam.task);
+cmdline.focus();
+}
+</script>
+</body>
+</html>
